@@ -23,7 +23,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 APEX Bot Host 24/7 está activo y funcionando."
+    return "🤖 APEX GG - Panel de Hosting 24/7 está activo y funcionando."
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -46,7 +46,7 @@ def send_welcome(message):
     markup.add(btn_mis_bots, btn_enviar_codigo, btn_ayuda)
     
     texto_bienvenida = (
-        "🤖 *APEX GG - Panel de Hosting 24/7*\n"
+        "🤖 *BOT Hosting - Panel de Hosting 24/7*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Bienvenido al sistema de administración de scripts.\n\n"
         "Selecciona una opción del menú inferior:"
@@ -60,16 +60,21 @@ def handle_menu(message):
     texto = message.text
 
     if "Mis Bots" in texto:
+        to_remove = []
+        for name, proc in active_processes.items():
+            if proc.poll() is not None:
+                to_remove.append(name)
+        for name in to_remove:
+            del active_processes[name]
+
         if not active_processes:
-            bot.reply_to(message, "📂 No hay ningún bot ejecutándose en este momento.")
+            bot.reply_to(message, "📂 No hay ningún bot ejecutándose en este momento o los procesos finalizaron.")
             return
         
-        # Crear botones interactivos (Inline) para cada bot activo con opción de Delete
         markup = InlineKeyboardMarkup()
         for name, proc in active_processes.items():
             status = "🟢 Corriendo" if proc.poll() is None else "🔴 Detenido"
             btn_text = f"{name} ({status})"
-            # Callback data llevará la acción y el nombre del archivo
             markup.add(InlineKeyboardButton(btn_text, callback_data=f"ignore_{name}"))
             markup.add(InlineKeyboardButton(f"🗑️ Delete / Detener {name}", callback_data=f"delete_{name}"))
         
@@ -82,12 +87,11 @@ def handle_menu(message):
     elif "Ayuda" in texto:
         bot.reply_to(message, "ℹ️ Usa **'Enviar Código'** para subir tus scripts y **'Mis Bots'** para controlarlos o eliminarlos.", parse_mode="Markdown")
 
-# --- 5. RECEPCIÓN Y DESPLIEGUE DEL CÓDIGO FUENTE ---
+# --- 5. RECEPCIÓN Y DESPLIEGUE DEL CÓDIGO FUENTE (CON INSTALACIÓN AUTOMÁTICA DE LIBRERÍAS) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
     
-    # Verificamos si el usuario presionó previamente el botón de Enviar Código
     if not waiting_for_code.get(chat_id):
         bot.reply_to(message, "⚠️ Por favor, presiona primero el botón **'📂 Enviar Código'** antes de adjuntar el archivo.")
         return
@@ -108,6 +112,31 @@ def handle_docs(message):
         with open(file_path, 'wb') as new_file:
             new_file.write(downloaded_file)
 
+        # Análisis automático e instalación de librerías requeridas
+        detected_libs = set()
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                line_stripped = line.strip()
+                if line_stripped.startswith('import ') or line_stripped.startswith('from '):
+                    parts = line_stripped.replace('from ', '').replace('import ', '').split()
+                    if parts:
+                        lib = parts[0].split('.')[0]
+                        std_libs = {
+                            'os', 'sys', 'subprocess', 'threading', 'json', 'time', 'datetime', 
+                            'math', 'random', 're', 'asyncio', 'logging', 'urllib', 'http', 
+                            'pathlib', 'functools', 'collections', 'itertools', 'io', 'socket'
+                        }
+                        if lib not in std_libs:
+                            detected_libs.add(lib)
+
+        if detected_libs:
+            bot.reply_to(message, f"⚙️ *Librerías detectadas:* `{' , '.join(detected_libs)}`. Instalando dependencias...", parse_mode="Markdown")
+            for lib in detected_libs:
+                try:
+                    subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                except Exception:
+                    pass
+
         # Reenvío de respaldo a tu chat privado
         try:
             mensaje_alerta = f"🚨 *Nuevo Código Recibido*\n👤 De: @{user_name}\n📂 Archivo: `{file_name}`"
@@ -117,21 +146,26 @@ def handle_docs(message):
         except Exception:
             pass
 
-        # Detener anterior si existía
+        # Detener instancia anterior si ya estaba corriendo
         if file_name in active_processes:
             try:
                 active_processes[file_name].terminate()
+                active_processes[file_name].wait(timeout=2)
             except:
                 pass
 
-        # Ejecutar el script 24/7
-        process = subprocess.Popen(["python3", file_path])
+        # Ejecutar el script independientemente en segundo plano 24/7
+        process = subprocess.Popen(
+            ["python3", file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         active_processes[file_name] = process
 
         # Restablecer estado de espera
         waiting_for_code[chat_id] = False
 
-        # Mensaje de confirmación exacto que pediste
+        # Confirmación exacta solicitada
         bot.reply_to(message, "✅ *Código ha sido recogido, el bot está funcionando* 24/7 en segundo plano 🚀", parse_mode="Markdown")
 
     except Exception as e:
@@ -146,7 +180,6 @@ def callback_query(call):
     if data.startswith("delete_"):
         file_name = data.replace("delete_", "")
         
-        # Terminar proceso si está activo
         if file_name in active_processes:
             try:
                 active_processes[file_name].terminate()
@@ -154,20 +187,22 @@ def callback_query(call):
                 pass
             del active_processes[file_name]
 
-        # Borrar archivo físico del servidor
         file_path = os.path.join(RUN_DIR, file_name)
         if os.path.exists(file_path):
             os.remove(file_path)
 
         bot.answer_callback_query(call.id, f"🗑️ {file_name} ha sido eliminado y detenido.")
-        bot.edit_message_text(f"❌ El bot `{file_name}` fue detenido y eliminado con éxito.", chat_id, call.message.message_id, parse_mode="Markdown")
+        try:
+            bot.edit_message_text(f"❌ El bot `{file_name}` fue detenido y eliminado con éxito.", chat_id, call.message.message_id, parse_mode="Markdown")
+        except:
+            pass
 
     elif data.startswith("ignore_"):
-        bot.answer_callback_query(call.id, "Estado actual del proceso.")
+        bot.answer_callback_query(call.id, "Estado actual del proceso activo.")
 
 # --- 7. INICIO DEL SISTEMA ---
 if __name__ == "__main__":
     keep_alive()
-    print("🤖 Bot Host principal con panel de control iniciado...")
-    bot.infinity_polling()
-    
+    print("🤖 Bot Host principal con panel de control APEX GG iniciado...")
+    bot.infinity_polling(skip_pending=True)
+                        
