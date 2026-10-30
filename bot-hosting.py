@@ -25,6 +25,12 @@ process_logs = {}         # file_key -> log_file_path
 waiting_for_code = {}     # chat_id -> True/False
 maintenance_mode = False  # Estado global del modo mantenimiento
 
+# --- NUEVOS REGISTROS DE SEGURIDAD Y USUARIOS ---
+authorized_users = {TU_CHAT_ID_PRIVADO}  # Tú estás autorizado por defecto
+pending_users = {}                       # chat_id -> user_info
+banned_users = set()                     # IDs de usuarios baneados
+all_users_interacted = set()             # Historial de todos los que han usado el bot
+
 # --- 2. SISTEMA KEEP-ALIVE (Hosting 24/7 en Render) ---
 app = Flask('')
 
@@ -41,21 +47,55 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- 3. MENÚ PRINCIPAL CON BOTONES (/start) ---
+# --- 3. MENÚ PRINCIPAL CON CONTROL DE ACCESO Y APROBACIÓN ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_id = message.chat.id
+    user_name = message.from_user.username or message.from_user.first_name
     
+    # Registrar usuario en el historial general
+    all_users_interacted.add((chat_id, user_name))
+
+    # Verificar si está baneado
+    if chat_id in banned_users:
+        bot.send_message(chat_id, "❌ *Acceso denegado.* Has sido baneado de este panel de hosting.")
+        return
+
+    # Verificar modo mantenimiento (Excepción Admin)
     if maintenance_mode and chat_id != TU_CHAT_ID_PRIVADO:
         bot.send_message(chat_id, "🛠️ *APEX GG se encuentra en Mantenimiento Programado.*\nPor favor, intente más tarde.", parse_mode="Markdown")
         return
 
+    # Verificar si el usuario ya fue aprobado por el Admin
+    if chat_id not in authorized_users:
+        pending_users[chat_id] = user_name
+        
+        # Notificar al Admin con botones de Aceptar / Rechazar
+        markup_admin = InlineKeyboardMarkup(row_width=2)
+        markup_admin.add(
+            InlineKeyboardButton("✅ Aceptar", callback_data=f"approve_{chat_id}"),
+            InlineKeyboardButton("❌ Rechazar", callback_data=f"reject_{chat_id}")
+        )
+        bot.send_message(
+            TU_CHAT_ID_PRIVADO,
+            f"🚨 *Nueva solicitud de acceso al Hosting*\n👤 Usuario: @{user_name}\n🆔 ID: `{chat_id}`",
+            parse_mode="Markdown",
+            reply_markup=markup_admin
+        )
+        
+        # Mensaje al usuario indicando que debe esperar
+        bot.send_message(
+            chat_id,
+            "⏳ *Acceso Pendiente de Aprobación*\n\nTu solicitud ha sido enviada al Administrador (Dave). En cuanto te acepte, podrás utilizar el panel de hosting.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Si está autorizado, mostrar menú principal
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
     btn_mis_bots = KeyboardButton("🤖 Mis Bots")
     btn_enviar_codigo = KeyboardButton("📂 Enviar Código")
     btn_ayuda = KeyboardButton("ℹ️ Ayuda")
-    
     markup.add(btn_mis_bots, btn_enviar_codigo, btn_ayuda)
     
     texto_bienvenida = (
@@ -66,7 +106,7 @@ def send_welcome(message):
     )
     bot.send_message(chat_id, texto_bienvenida, parse_mode="Markdown", reply_markup=markup)
 
-# --- 4. PANEL DE ADMINISTRADOR SECRETO (/admin) ---
+# --- 4. PANEL DE ADMINISTRADOR SECRETO AVANZADO (/admin) ---
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
     chat_id = message.chat.id
@@ -77,15 +117,16 @@ def admin_panel(message):
     status_maint = "🟢 Activado" if maintenance_mode else "🔴 Desactivado"
     
     markup = InlineKeyboardMarkup(row_width=1)
-    btn_toggle = InlineKeyboardButton(f"🛠️ Cambiar Modo Mantenimiento ({status_maint})", callback_data="toggle_maintenance")
-    btn_stats = InlineKeyboardButton("📊 Estado del Servidor", callback_data="admin_stats")
-    markup.add(btn_toggle, btn_stats)
+    btn_toggle = InlineKeyboardButton(f"🛠️ Modo Mantenimiento ({status_maint})", callback_data="toggle_maintenance")
+    btn_users = InlineKeyboardButton("👥 Ver Usuarios y Estadísticas", callback_data="admin_users")
+    btn_ban = InlineKeyboardButton("🚫 Gestionar Baneos", callback_data="admin_ban_menu")
+    markup.add(btn_toggle, btn_users, btn_ban)
 
     bot.send_message(
         chat_id, 
         "🔐 *Panel de Administrador Secreto - APEX GG*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Bienvenido, Dave. Controla los ajustes globales del hosting:", 
+        "Bienvenido, Dave. Controla la seguridad y usuarios del hosting:", 
         parse_mode="Markdown", 
         reply_markup=markup
     )
@@ -96,8 +137,15 @@ def handle_menu(message):
     chat_id = message.chat.id
     texto = message.text
 
+    if chat_id in banned_users:
+        return
+
     if maintenance_mode and chat_id != TU_CHAT_ID_PRIVADO:
-        bot.reply_to(message, "🛠️ *Sistema en Mantenimiento.*\nNo se pueden procesar solicitudes en este momento.", parse_mode="Markdown")
+        bot.reply_to(message, "🛠️ *Sistema en Mantenimiento.*", parse_mode="Markdown")
+        return
+
+    if chat_id not in authorized_users and chat_id != TU_CHAT_ID_PRIVADO:
+        bot.reply_to(message, "⏳ Tu cuenta aún está pendiente de aprobación por el Administrador.")
         return
 
     if "Mis Bots" in texto:
@@ -134,6 +182,9 @@ def handle_menu(message):
 def handle_docs(message):
     chat_id = message.chat.id
     
+    if chat_id in banned_users or (chat_id not in authorized_users and chat_id != TU_CHAT_ID_PRIVADO):
+        return
+
     if maintenance_mode and chat_id != TU_CHAT_ID_PRIVADO:
         bot.reply_to(message, "🛠️ El hosting está en *Mantenimiento*.", parse_mode="Markdown")
         return
@@ -184,7 +235,6 @@ def handle_docs(message):
             target_script = file_path
             process_key = file_name
 
-        # Módulos internos nativos de Python que no deben instalarse con pip
         stdlib_modules = {
             'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
             'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
@@ -200,9 +250,7 @@ def handle_docs(message):
                     parts = line_stripped.replace('from ', '').replace('import ', '').split()
                     if parts:
                         lib = parts[0].split('.')[0]
-                        # Si no es un módulo interno de Python, lo agregamos para instalarlo
                         if lib and lib not in stdlib_modules:
-                            # Mapeos especiales de nombres de librerías comunes
                             if lib == 'telegram':
                                 detected_libs.add('python-telegram-bot')
                             elif lib == 'bs4':
@@ -213,7 +261,7 @@ def handle_docs(message):
                                 detected_libs.add(lib)
 
         if detected_libs:
-            bot.reply_to(message, f"⚙️ *Instalando dependencias necesarias:* `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
+            bot.reply_to(message, f"⚙️ *Instalando dependencias:* `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
             for lib in detected_libs:
                 try:
                     subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -258,14 +306,99 @@ def handle_docs(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-# --- 7. ACCIONES DE LOS BOTONES INTERACTIVOS ---
+# --- 7. ACCIONES DE LOS BOTONES INTERACTIVOS Y ADMIN (APROBAR, BANEAR, ESTADÍSTICAS) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     global maintenance_mode
     data = call.data
     chat_id = call.message.chat.id
 
-    if data == "toggle_maintenance":
+    # 1. Aceptar nuevo usuario
+    if data.startswith("approve_"):
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        target_id = int(data.replace("approve_", ""))
+        if target_id in pending_users:
+            uname = pending_users.pop(target_id)
+            authorized_users.add(target_id)
+            bot.answer_callback_query(call.id, f"Usuario @{uname} aceptado con éxito.")
+            bot.send_message(target_id, "🎉 *¡Tu solicitud ha sido aprobada por el Administrador!*\nYa puedes enviar `/start` para usar el panel de hosting.")
+            bot.edit_message_text(f"✅ Solicitud de @{uname} (`{target_id}`) **Aceptada**.", chat_id, call.message.message_id, parse_mode="Markdown")
+
+    # 2. Rechazar nuevo usuario
+    elif data.startswith("reject_"):
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        target_id = int(data.replace("reject_", ""))
+        if target_id in pending_users:
+            uname = pending_users.pop(target_id)
+            bot.answer_callback_query(call.id, f"Usuario @{uname} rechazado.")
+            bot.send_message(target_id, "❌ Lo sentimos, tu solicitud de acceso al panel de hosting fue rechazada.")
+            bot.edit_message_text(f"❌ Solicitud de @{uname} (`{target_id}`) **Rechazada**.", chat_id, call.message.message_id, parse_mode="Markdown")
+
+    # 3. Ver lista de usuarios y estadísticas
+    elif data == "admin_users":
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        total_interacted = len(all_users_interacted)
+        active_auth = len(authorized_users)
+        
+        user_list_text = "\n".join([f"• @{uname} (`{uid}`)" for uid, uname in all_users_interacted])
+        if not user_list_text:
+            user_list_text = "Ninguno registrado aún."
+
+        msg = (
+            f"📊 *Estadísticas de Usuarios - APEX GG*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 Total que han usado el bot: `{total_interacted}`\n"
+            f"✅ Usuarios autorizados activos: `{active_auth}`\n\n"
+            f"📋 *Lista de usuarios registrados:*\n{user_list_text}"
+        )
+        bot.send_message(chat_id, msg, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+
+    # 4. Menú de baneos
+    elif data == "admin_ban_menu":
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        
+        markup_bans = InlineKeyboardMarkup(row_width=1)
+        for uid, uname in all_users_interacted:
+            if uid != TU_CHAT_ID_PRIVADO:
+                is_banned = uid in banned_users
+                b_text = f"Unban @{uname}" if is_banned else f"Ban @{uname}"
+                callback_action = f"unban_{uid}" if is_banned else f"ban_{uid}"
+                markup_bans.add(InlineKeyboardButton(b_text, callback_data=callback_action))
+        
+        if not all_users_interacted or len(all_users_interacted) <= 1:
+            bot.answer_callback_query(call.id, "No hay otros usuarios para banear.", show_alert=True)
+            return
+
+        bot.send_message(chat_id, "🚫 *Selecciona un usuario para Banear / Desbanear:*", parse_mode="Markdown", reply_markup=markup_bans)
+        bot.answer_callback_query(call.id)
+
+    # 5. Ejecutar Ban
+    elif data.startswith("ban_"):
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        target_id = int(data.replace("ban_", ""))
+        banned_users.add(target_id)
+        if target_id in authorized_users:
+            authorized_users.remove(target_id)
+        bot.answer_callback_query(call.id, f"Usuario con ID {target_id} baneado.", show_alert=True)
+        bot.send_message(target_id, "❌ Has sido baneado del panel de hosting por el Administrador.")
+
+    # 6. Ejecutar Unban
+    elif data.startswith("unban_"):
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            return
+        target_id = int(data.replace("unban_", ""))
+        if target_id in banned_users:
+            banned_users.remove(target_id)
+        bot.answer_callback_query(call.id, f"Usuario con ID {target_id} desbaneado.", show_alert=True)
+        bot.send_message(target_id, "✅ Tu baneo ha sido retirado. Ya puedes enviar `/start`.")
+
+    elif data == "toggle_maintenance":
         if chat_id != TU_CHAT_ID_PRIVADO:
             bot.answer_callback_query(call.id, "Acceso denegado.", show_alert=True)
             return
@@ -276,20 +409,15 @@ def callback_query(call):
         
         status_maint = "🟢 Activado" if maintenance_mode else "🔴 Desactivado"
         markup = InlineKeyboardMarkup(row_width=1)
-        btn_toggle = InlineKeyboardButton(f"🛠️ Cambiar Modo Mantenimiento ({status_maint})", callback_data="toggle_maintenance")
-        btn_stats = InlineKeyboardButton("📊 Estado del Servidor", callback_data="admin_stats")
-        markup.add(btn_toggle, btn_stats)
+        btn_toggle = InlineKeyboardButton(f"🛠️ Modo Mantenimiento ({status_maint})", callback_data="toggle_maintenance")
+        btn_users = InlineKeyboardButton("👥 Ver Usuarios y Estadísticas", callback_data="admin_users")
+        btn_ban = InlineKeyboardButton("🚫 Gestionar Baneos", callback_data="admin_ban_menu")
+        markup.add(btn_toggle, btn_users, btn_ban)
         
         try:
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
         except:
             pass
-
-    elif data == "admin_stats":
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        bots_count = len([p for p in active_processes.values() if p.poll() is None])
-        bot.answer_callback_query(call.id, f"Servidores activos en línea: {bots_count}", show_alert=True)
 
     elif data.startswith("console_"):
         file_name = data.replace("console_", "")
@@ -337,6 +465,5 @@ def callback_query(call):
 # --- 8. INICIO DEL SISTEMA ---
 if __name__ == "__main__":
     keep_alive()
-    print("🤖 APEX GG Cloud Hosting Daemon initialized successfully...")
+    print("🤖 APEX GG Cloud Hosting Daemon initialized successfully with Access Control...")
     bot.infinity_polling(skip_pending=True)
-            
