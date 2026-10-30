@@ -3,11 +3,9 @@ import subprocess
 import threading
 import zipfile
 import time
-from flask 
-import Flask
+from flask import Flask
 import telebot
-from telebot.types 
-import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- 1. CONFIGURACIÓN INICIAL ---
 TOKEN = "9103684662:AAE0GCB-uc6bB9dxDTDBT6duSAIa5UTfHIY"
