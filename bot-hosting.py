@@ -69,7 +69,7 @@ TEXTS = {
         'btn_console': "📊 Console / Logs",
         'btn_delete': "🗑️ Delete",
         'prompt_send': "📥 *Send your bot source file (.py) or complete project (.zip)* to start automated cloud deployment.",
-        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Send Code** to upload your script.\n2️⃣ The system will automatically install required dependencies.\n3️⃣ Control your services via **My Bots**.",
+        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Send Code** to upload your script.\n2️⃣ The system will automatically install required dependencies.\n3️⃣ Control your services via **My Servers**.",
         'wrong_file': "⚠️ Invalid format. Only `.py` files or `.zip` archives are allowed.",
         'lang_changed': "🌐 Language updated to: **English** 🇬🇧",
         'pending_msg': "⏳ *Access Pending Approval*\nYour request has been sent to the Administrator.",
@@ -82,16 +82,22 @@ def get_text(chat_id, key):
     lang = user_language.get(chat_id, 'es')
     return TEXTS[lang].get(key, TEXTS['es'][key])
 
-# --- 3. SISTEMA KEEP-ALIVE PARA RENDER (24/7) ---
+# --- 3. CONFIGURACIÓN WEB FLASK (Obligatoria para Render) ---
 app = Flask('')
 
 @app.route('/')
 def home():
     return "🤖 APEX GG - Cloud Hosting Panel 24/7 is active and fully operational."
 
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
+def run_telegram_bot():
+    """Ejecuta el bot de Telegram en segundo plano para no bloquear el puerto web"""
+    print("🤖 Iniciando polling de Telegram en hilo secundario...")
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True)
+        except Exception as e:
+            print(f"⚠️ Error en polling de Telegram: {e}")
+            time.sleep(3)
 
 # --- 4. PANEL PRINCIPAL CON CONTROL DE ACCESO (/start) ---
 @bot.message_handler(commands=['start'])
@@ -448,10 +454,4 @@ def callback_query(call):
         target_id = int(data.replace("unban_", ""))
         if target_id in banned_users:
             banned_users.remove(target_id)
-        bot.answer_callback_query(call.id, f"Usuario {target_id} desbaneado.", show_alert=True)
-        bot.send_message(target_id, "✅ Tu baneo ha sido retirado. Envía `/start`.")
-
-    elif data == "toggle_maintenance":
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            bot.answer_callback_query(call.id, "Acceso denegado.", show_alert=True)
-     
+        bot.answer_callback_query(call.id, f"Usuario {target_id} desbaneado.", sh
