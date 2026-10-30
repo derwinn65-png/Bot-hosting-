@@ -42,10 +42,10 @@ TEXTS = {
         'btn_stop': "⏹️ Detener",
         'btn_delete': "🗑️ Eliminar",
         'prompt_send': "📥 *Envía el archivo fuente (.py) o proyecto completo en (.zip)* de tu bot para iniciar el despliegue automático en el hosting.",
-        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Pulsa **Desplegar Bot** para subir tu script o ZIP.\n2️⃣ El sistema detectará las librerías necesarias e instalará las dependencias de forma limpia.\n3️⃣ Controla, revisa la consola (logs) o reinicia tus servicios desde **Mis Servidores**.",
+        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Pulsa **Desplegar Bot** para subir tu script o ZIP.\n2️⃣ El sistema detectará únicamente las librerías necesarias e instalará las dependencias de forma limpia.\n3️⃣ Controla, revisa la consola (logs) o reinicia tus servicios desde **Mis Servidores**.",
         'wrong_file': "⚠️ Formato no válido. Solo se permiten archivos `.py` o comprimidos `.zip`.",
         'no_press_btn': "⚠️ Por favor, presiona primero el botón **'🚀 Desplegar Bot'** antes de adjuntar el archivo.",
-        'libs_detected': "⚙️ *Dependencias externas detectadas:*",
+        'libs_detected': "⚙️ *Librerías externas necesarias detectadas:*",
         'installing': "Instalando paquetes...",
         'alert_new': "🚨 *Nuevo Despliegue en Hosting*\n👤 Usuario: @{user}\n📂 Paquete: `{file}`",
         'success_run': "✅ *¡Despliegue exitoso!* El servidor se ha iniciado en segundo plano 24/7 🚀",
@@ -70,10 +70,10 @@ TEXTS = {
         'btn_stop': "⏹️ Stop",
         'btn_delete': "🗑️ Delete",
         'prompt_send': "📥 *Send your bot source file (.py) or complete project (.zip)* right now to start automated cloud deployment.",
-        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Deploy Bot** to upload your script or ZIP package.\n2️⃣ The system will automatically parse and install required clean dependencies.\n3️⃣ Control, check console logs, or restart your services anytime via **My Servers**.",
+        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Deploy Bot** to upload your script or ZIP package.\n2️⃣ The system will automatically parse and install only required clean dependencies.\n3️⃣ Control, check console logs, or restart your services anytime via **My Servers**.",
         'wrong_file': "⚠️ Invalid format. Only `.py` files or `.zip` archives are allowed.",
         'no_press_btn': "⚠️ Please press the **'🚀 Deploy Bot'** button first before uploading your file.",
-        'libs_detected': "⚙️ *External dependencies detected:*",
+        'libs_detected': "⚙️ *Necessary external libraries detected:*",
         'installing': "Installing packages...",
         'alert_new': "🚨 *New Hosting Deployment*\n👤 User: @{user}\n📂 Package: `{file}`",
         'success_run': "✅ *Deployment successful!* Your server is now running 24/7 in the background 🚀",
@@ -278,6 +278,7 @@ def callback_query(call):
     elif data.startswith("ignore_"):
         bot.answer_callback_query(call.id, "Server status active.")
 
+# --- 6. PROCESAMIENTO, DESCOMPRESIÓN ZIP Y FILTRO DE LIBRERÍAS ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -380,12 +381,21 @@ def handle_docs(message):
             )
             active_processes[process_key] = process
 
+        # Verificación de arranque para reportar errores inmediatos
+        time.sleep(2)
+        if process.poll() is not None:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
+                error_output = lf.read()[-500:]
+            bot.reply_to(message, f"❌ *El script se detuvo inmediatamente al iniciar.*\n\n*Error en consola:*\n```text\n{error_output}\n```", parse_mode="Markdown")
+            return
+
         waiting_for_code[chat_id] = False
         bot.reply_to(message, get_text(chat_id, 'success_run'), parse_mode="Markdown")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Hosting deployment error: {str(e)}")
 
+# --- 7. INICIO DEL SISTEMA DE HOSTING ---
 if __name__ == "__main__":
     keep_alive()
     print("🤖 APEX GG Cloud Hosting Daemon initialized successfully...")
