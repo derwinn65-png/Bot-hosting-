@@ -15,10 +15,8 @@ bot = telebot.TeleBot(TOKEN)
 
 RUN_DIR = "./user_bots"
 LOGS_DIR = "./user_logs"
-if not os.path.exists(RUN_DIR):
-    os.makedirs(RUN_DIR)
-if not os.path.exists(LOGS_DIR):
-    os.makedirs(LOGS_DIR)
+os.makedirs(RUN_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 active_processes = {}     # file_key -> subprocess.Popen
 process_logs = {}         # file_key -> log_file_path
@@ -98,7 +96,7 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- 4. PANEL PRINCIPAL CON CONTROL DE ACCESO Y BOTÓN ADMIN EXCLUSIVO (/start) ---
+# --- 4. PANEL PRINCIPAL CON CONTROL DE ACCESO (/start) ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_id = message.chat.id
@@ -126,16 +124,19 @@ def send_welcome(message):
             InlineKeyboardButton("✅ Aceptar", callback_data=f"approve_{chat_id}"),
             InlineKeyboardButton("❌ Rechazar", callback_data=f"reject_{chat_id}")
         )
-        bot.send_message(
-            TU_CHAT_ID_PRIVADO,
-            f"🚨 *Nueva solicitud de acceso al Hosting*\n👤 Usuario: @{user_name}\n🆔 ID: `{chat_id}`",
-            parse_mode="Markdown",
-            reply_markup=markup_admin
-        )
+        try:
+            bot.send_message(
+                TU_CHAT_ID_PRIVADO,
+                f"🚨 *Nueva solicitud de acceso al Hosting*\n👤 Usuario: @{user_name}\n🆔 ID: `{chat_id}`",
+                parse_mode="Markdown",
+                reply_markup=markup_admin
+            )
+        except Exception:
+            pass
+            
         bot.send_message(chat_id, get_text(chat_id, 'pending_msg'), parse_mode="Markdown")
         return
 
-    # Teclado inferior dinámico (Si eres el Admin, se incluye el botón Admin Panel abajo)
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         KeyboardButton(get_text(chat_id, 'btn_bots')),
@@ -191,7 +192,6 @@ def handle_menu(message):
         bot.reply_to(message, get_text(chat_id, 'pending_msg'), parse_mode="Markdown")
         return
 
-    # Botón exclusivo Admin Panel para ti
     if chat_id == TU_CHAT_ID_PRIVADO and ("Admin Panel" in texto):
         show_admin_menu(chat_id)
         return
@@ -246,7 +246,7 @@ def handle_menu(message):
     elif "Ayuda" in texto or "Help" in texto:
         bot.reply_to(message, get_text(chat_id, 'help_text'), parse_mode="Markdown")
 
-# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO (.PY o .ZIP) ---
+# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -298,160 +298,4 @@ def handle_docs(message):
             if not target_script:
                 bot.reply_to(message, "❌ Error: No .py script found inside zip archive.")
                 return
-            process_key = file_name
-        else:
-            target_script = file_path
-            process_key = file_name
-
-        stdlib_modules = {
-            'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
-            'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
-            'pathlib', 'sqlite3', 'hashlib', 'base64', 'urllib', 'http', 'socket', 'asyncio',
-            'logging', 'traceback', 'zipfile', 'tarfile', 'io', 'csv', 'xml', 'html'
-        }
-        
-        detected_libs = set()
-        with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                line_stripped = line.strip()
-                if line_stripped.startswith('import ') or line_stripped.startswith('from '):
-                    parts = line_stripped.replace('from ', '').replace('import ', '').split()
-                    if parts:
-                        lib = parts[0].split('.')[0]
-                        if lib and lib not in stdlib_modules:
-                            if lib == 'telegram':
-                                detected_libs.add('python-telegram-bot')
-                            elif lib == 'bs4':
-                                detected_libs.add('beautifulsoup4')
-                            elif lib == 'cv2':
-                                detected_libs.add('opencv-python')
-                            else:
-                                detected_libs.add(lib)
-
-        if detected_libs:
-            bot.reply_to(message, f"⚙️ Instalando dependencias: `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
-            for lib in detected_libs:
-                try:
-                    subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                except Exception:
-                    pass
-
-        try:
-            mensaje_alerta = f"🚨 *Nuevo Despliegue en Hosting*\n👤 Usuario: @{user_name}\n📂 Paquete: `{file_name}`"
-            bot.send_message(TU_CHAT_ID_PRIVADO, mensaje_alerta, parse_mode="Markdown")
-            with open(file_path, 'rb') as doc_to_send:
-                bot.send_document(TU_CHAT_ID_PRIVADO, doc_to_send)
-        except Exception:
-            pass
-
-        if process_key in active_processes:
-            try:
-                active_processes[process_key].terminate()
-            except:
-                pass
-
-        log_path = os.path.join(LOGS_DIR, f"{process_key}.log")
-        process_logs[process_key] = log_path
-
-        with open(log_path, 'w', encoding='utf-8') as log_file:
-            process = subprocess.Popen(
-                ["python3", target_script],
-                stdout=log_file,
-                stderr=log_file
-            )
-            active_processes[process_key] = process
-
-        time.sleep(2)
-        if process.poll() is not None:
-            with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
-                error_output = lf.read()[-500:]
-            bot.reply_to(message, f"❌ *El script se detuvo al iniciar.*\n\n*Error en consola:*\n```text\n{error_output}\n```", parse_mode="Markdown")
-            return
-
-        waiting_for_code[chat_id] = False
-        bot.reply_to(message, "✅ *¡Despliegue exitoso!* El bot está funcionando 24/7 en segundo plano 🚀", parse_mode="Markdown")
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ Hosting deployment error: {str(e)}")
-
-# --- 8. ACCIONES DE BOTONES INTERACTIVOS Y PANEL DE ADMIN ---
-@bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
-    global maintenance_mode
-    data = call.data
-    chat_id = call.message.chat.id
-
-    if data.startswith("approve_"):
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        target_id = int(data.replace("approve_", ""))
-        if target_id in pending_users:
-            uname = pending_users.pop(target_id)
-            authorized_users.add(target_id)
-            bot.answer_callback_query(call.id, f"Usuario @{uname} aceptado.")
-            bot.send_message(target_id, "🎉 *¡Tu solicitud ha sido aprobada!* Ya puedes enviar `/start` para usar el hosting.")
-            bot.edit_message_text(f"✅ Solicitud de @{uname} (`{target_id}`) **Aceptada**.", chat_id, call.message.message_id, parse_mode="Markdown")
-
-    elif data.startswith("reject_"):
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        target_id = int(data.replace("reject_", ""))
-        if target_id in pending_users:
-            uname = pending_users.pop(target_id)
-            bot.answer_callback_query(call.id, f"Usuario @{uname} rechazado.")
-            bot.send_message(target_id, "❌ Tu solicitud de acceso fue rechazada.")
-            bot.edit_message_text(f"❌ Solicitud de @{uname} (`{target_id}`) **Rechazada**.", chat_id, call.message.message_id, parse_mode="Markdown")
-
-    elif data == "admin_users":
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        total_interacted = len(all_users_interacted)
-        active_auth = len(authorized_users)
-        user_list_text = "\n".join([f"• @{uname} (`{uid}`)" for uid, uname in all_users_interacted])
-        if not user_list_text:
-            user_list_text = "Ninguno registrado."
-
-        msg = (
-            f"📊 *Estadísticas de Usuarios - APEX GG*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👥 Total que han usado el bot: `{total_interacted}`\n"
-            f"✅ Usuarios autorizados activos: `{active_auth}`\n\n"
-            f"📋 *Lista de registrados:*\n{user_list_text}"
-        )
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_ban_menu":
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        markup_bans = InlineKeyboardMarkup(row_width=1)
-        for uid, uname in all_users_interacted:
-            if uid != TU_CHAT_ID_PRIVADO:
-                is_banned = uid in banned_users
-                b_text = f"Unban @{uname}" if is_banned else f"Ban @{uname}"
-                c_action = f"unban_{uid}" if is_banned else f"ban_{uid}"
-                markup_bans.add(InlineKeyboardButton(b_text, callback_data=c_action))
-        
-        if len(all_users_interacted) <= 1:
-            bot.answer_callback_query(call.id, "No hay otros usuarios para banear.", show_alert=True)
-            return
-
-        bot.send_message(chat_id, "🚫 *Selecciona un usuario para Banear / Desbanear:*", parse_mode="Markdown", reply_markup=markup_bans)
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("ban_"):
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        target_id = int(data.replace("ban_", ""))
-        banned_users.add(target_id)
-        if target_id in authorized_users:
-            authorized_users.remove(target_id)
-        bot.answer_callback_query(call.id, f"Usuario {target_id} baneado.", show_alert=True)
-        bot.send_message(target_id, "❌ Has sido baneado del panel de hosting.")
-
-    elif data.startswith("unban_"):
-        if chat_id != TU_CHAT_ID_PRIVADO:
-            return
-        target_id = int(data.replace("unban_", ""))
-        if target_id in banned_users:
-            banned_us
+            process_key
