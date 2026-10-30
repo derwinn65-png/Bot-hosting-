@@ -91,12 +91,7 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = threading.Thread(target=run_web)
-    t.daemon = True
-    t.start()
+    app.run(host='0.0.0.0', port=port, use_reloader=False)
 
 # --- 4. PANEL PRINCIPAL CON CONTROL DE ACCESO (/start) ---
 @bot.message_handler(commands=['start'])
@@ -458,4 +453,5 @@ def callback_query(call):
 
     elif data == "toggle_maintenance":
         if chat_id != TU_CHAT_ID_PRIVADO:
-            bot
+            bot.answer_callback_query(call.id, "Acceso denegado.", show_alert=True)
+     
