@@ -20,10 +20,14 @@ if not os.path.exists(RUN_DIR):
 if not os.path.exists(LOGS_DIR):
     os.makedirs(LOGS_DIR)
 
-active_processes = {}     
-process_logs = {}         
-waiting_for_code = {}     
+active_processes = {}     # file_key -> subprocess.Popen
+process_logs = {}         # file_key -> log_file_path
+process_ports = {}        # file_key -> port_number
+waiting_for_code = {}     # chat_id -> True/False
 maintenance_mode = False  
+
+# Control de puertos dinámicos para servidores web de usuarios (desde el 9000 en adelante)
+BASE_USER_PORT = 9000
 
 # --- GESTIÓN DE ACCESO Y USUARIOS ---
 authorized_users = {TU_CHAT_ID_PRIVADO}
@@ -41,14 +45,14 @@ TEXTS = {
         'btn_help': "ℹ️ Ayuda",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Español",
-        'no_bots': "📂 No hay ningún bot ejecutándose actualmente.",
-        'active_bots': "📋 *Bots Activos (24/7):*",
+        'no_bots': "📂 No hay ningún servidor o bot ejecutándose actualmente.",
+        'active_bots': "📋 *Servidores y Bots Activos (24/7):*",
         'status_running': "🟢 En Línea",
         'status_stopped': "🔴 Apagado",
         'btn_console': "📊 Consola / Logs",
         'btn_delete': "🗑️ Eliminar",
-        'prompt_send': "📥 *Envía el archivo fuente (.py) o proyecto en (.zip)* de tu bot para iniciar el despliegue automático.",
-        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Pulsa **Enviar Código** para subir tu script.\n2️⃣ El sistema instalará las dependencias necesarias.\n3️⃣ Controla tus servicios desde **Mis Bots**.",
+        'prompt_send': "📥 *Envía el archivo fuente (.py) o proyecto en (.zip)* de tu bot o servidor web para iniciar el despliegue automático.",
+        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Pulsa **Enviar Código** para subir tu script o servidor web.\n2️⃣ El sistema instalará dependencias y asignará recursos.\n3️⃣ Gestiona tus servicios desde **Mis Bots** y obtén sus enlaces web.",
         'wrong_file': "⚠️ Formato no válido. Solo se permiten archivos `.py` o comprimidos `.zip`.",
         'lang_changed': "🌐 Idioma actualizado a: **Español** 🇪🇸",
         'pending_msg': "⏳ *Acceso Pendiente de Aprobación*\nTu solicitud ha sido enviada al Administrador.",
@@ -62,14 +66,14 @@ TEXTS = {
         'btn_help': "ℹ️ Help",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Spanish",
-        'no_bots': "📂 No bots are currently running.",
-        'active_bots': "📋 *Active Bots (24/7):*",
+        'no_bots': "📂 No servers or bots are currently running.",
+        'active_bots': "📋 *Active Servers & Bots (24/7):*",
         'status_running': "🟢 Online",
         'status_stopped': "🔴 Offline",
         'btn_console': "📊 Console / Logs",
         'btn_delete': "🗑️ Delete",
-        'prompt_send': "📥 *Send your bot source file (.py) or complete project (.zip)* to start automated cloud deployment.",
-        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Send Code** to upload your script.\n2️⃣ The system will automatically install required dependencies.\n3️⃣ Control your services via **My Servers**.",
+        'prompt_send': "📥 *Send your bot source file (.py) or web project (.zip)* to start automated cloud deployment.",
+        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Send Code** to upload your script or web server.\n2️⃣ The system will automatically configure dependencies.\n3️⃣ Control your services via **My Bots** and get web links.",
         'wrong_file': "⚠️ Invalid format. Only `.py` files or `.zip` archives are allowed.",
         'lang_changed': "🌐 Language updated to: **English** 🇬🇧",
         'pending_msg': "⏳ *Access Pending Approval*\nYour request has been sent to the Administrator.",
@@ -217,6 +221,8 @@ def handle_menu(message):
                 to_remove.append(name)
         for name in to_remove:
             del active_processes[name]
+            if name in process_ports:
+                del process_ports[name]
 
         if not active_processes and not process_logs:
             bot.reply_to(message, get_text(chat_id, 'no_bots'))
@@ -230,6 +236,12 @@ def handle_menu(message):
             status = get_text(chat_id, 'status_running') if (proc and proc.poll() is None) else get_text(chat_id, 'status_stopped')
             
             markup.add(InlineKeyboardButton(f"{name} ({status})", callback_data=f"ignore_{name}"))
+            
+            # Si el servicio tiene un puerto web asignado, agregamos botón con su enlace directo
+            if name in process_ports:
+                p_port = process_ports[name]
+                markup.add(InlineKeyboardButton(f"🌐 Ver Web (Puerto {p_port})", callback_data=f"weburl_{name}"))
+
             markup.add(
                 InlineKeyboardButton(get_text(chat_id, 'btn_console'), callback_data=f"console_{name}"),
                 InlineKeyboardButton(get_text(chat_id, 'btn_delete'), callback_data=f"delete_{name}")
@@ -244,7 +256,7 @@ def handle_menu(message):
     elif "Ayuda" in texto or "Help" in texto:
         bot.reply_to(message, get_text(chat_id, 'help_text'), parse_mode="Markdown")
 
-# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO (.PY o .ZIP) ---
+# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO DE SERVIDORES Y BOTS (.PY o .ZIP) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -301,6 +313,24 @@ def handle_docs(message):
             target_script = file_path
             process_key = file_name
 
+        # Detectar si el script es un servidor web (Flask, FastAPI, http.server, etc.)
+        is_web_server = False
+        with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
+            script_content = f.read()
+            if 'flask' in script_content.lower() or 'fastapi' in script_content.lower() or 'http.server' in script_content.lower() or 'app.run' in script_content.lower():
+                is_web_server = True
+
+        # Asignar puerto dinámico si es servidor web
+        assigned_port = None
+        env_vars = os.environ.copy()
+        if is_web_server:
+            existing_ports = list(process_ports.values())
+            assigned_port = BASE_USER_PORT
+            while assigned_port in existing_ports:
+                assigned_port += 1
+            process_ports[process_key] = assigned_port
+            env_vars["PORT"] = str(assigned_port)
+
         stdlib_modules = {
             'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
             'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
@@ -355,7 +385,8 @@ def handle_docs(message):
             process = subprocess.Popen(
                 ["python3", target_script],
                 stdout=log_file,
-                stderr=log_file
+                stderr=log_file,
+                env=env_vars
             )
             active_processes[process_key] = process
 
@@ -367,7 +398,13 @@ def handle_docs(message):
             return
 
         waiting_for_code[chat_id] = False
-        bot.reply_to(message, "✅ *¡Despliegue exitoso!* El bot está funcionando 24/7 en segundo plano 🚀", parse_mode="Markdown")
+        
+        # Respuesta de éxito con enlace web si es servidor
+        success_msg = "✅ *¡Despliegue exitoso!* El bot está funcionando 24/7 en segundo plano 🚀"
+        if assigned_port:
+            success_msg += f"\n\n🌐 *Servidor Web Detectado*\nPuedes acceder de manera local/interna o mediante el puerto asignado: `{assigned_port}`"
+
+        bot.reply_to(message, success_msg, parse_mode="Markdown")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Hosting deployment error: {str(e)}")
@@ -399,6 +436,12 @@ def callback_query(call):
             bot.answer_callback_query(call.id, f"Usuario @{uname} rechazado.")
             bot.send_message(target_id, "❌ Tu solicitud de acceso fue rechazada.")
             bot.edit_message_text(f"❌ Solicitud de @{uname} (`{target_id}`) **Rechazada**.", chat_id, call.message.message_id, parse_mode="Markdown")
+
+    elif data.startswith("weburl_"):
+        file_name = data.replace("weburl_", "")
+        port = process_ports.get(file_name, 8080)
+        bot.answer_callback_query(call.id, f"Puerto activo: {port}", show_alert=True)
+        bot.send_message(chat_id, f"🌐 *Enlace / Acceso Web para `{file_name}`:*\nEl servidor web está escuchando en el puerto interno: `{port}`.", parse_mode="Markdown")
 
     elif data == "admin_users":
         if chat_id != TU_CHAT_ID_PRIVADO:
@@ -460,7 +503,6 @@ def callback_query(call):
         if chat_id != TU_CHAT_ID_PRIVADO:
             bot.answer_callback_query(call.id, "Acceso denegado.", show_alert=True)
             return
-        global maintenance_mode
         maintenance_mode = not maintenance_mode
         status_text = "activado 🟢" if maintenance_mode else "desactivado 🔴"
         bot.answer_callback_query(call.id, f"Modo mantenimiento {status_text}")
@@ -499,6 +541,9 @@ def callback_query(call):
 
         if file_name in process_logs:
             del process_logs[file_name]
+        
+        if file_name in process_ports:
+            del process_ports[file_name]
 
         file_path = os.path.join(RUN_DIR, file_name)
         if os.path.exists(file_path):
@@ -511,16 +556,16 @@ def callback_query(call):
 
         bot.answer_callback_query(call.id, f"🗑️ {file_name} eliminado.")
         try:
-            bot.edit_message_text(f"❌ El bot `{file_name}` fue eliminado.", chat_id, call.message.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"❌ El servidor `{file_name}` fue eliminado.", chat_id, call.message.message_id, parse_mode="Markdown")
         except:
             pass
 
     elif data.startswith("ignore_"):
-        bot.answer_callback_query(call.id, "Bot status active.")
+        bot.answer_callback_query(call.id, "Server status active.")
 
 # --- 9. ARRANQUE PRINCIPAL ---
 if __name__ == "__main__":
-    print("🤖 Iniciando APEX GG Cloud Hosting...")
+    print("🤖 Iniciando APEX GG Cloud Hosting con soporte de Servidores Web...")
     
     t_bot = threading.Thread(target=run_telegram_bot)
     t_bot.daemon = True
