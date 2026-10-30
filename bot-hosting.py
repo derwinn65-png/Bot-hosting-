@@ -1,6 +1,8 @@
 import os
 import subprocess
 import threading
+import zipfile
+import time
 from flask import Flask
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -12,11 +14,15 @@ TU_CHAT_ID_PRIVADO = 6507117935  # Tu ID numérico privado (Admin)
 bot = telebot.TeleBot(TOKEN)
 
 RUN_DIR = "./user_bots"
+LOGS_DIR = "./user_logs"
 if not os.path.exists(RUN_DIR):
     os.makedirs(RUN_DIR)
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR)
 
-active_processes = {}
-waiting_for_code = {}  
+active_processes = {}     # file_key -> subprocess.Popen
+process_logs = {}         # file_key -> log_file_path
+waiting_for_code = {}     # chat_id -> True/False
 maintenance_mode = False  # Estado global del modo mantenimiento
 
 # --- 2. SISTEMA KEEP-ALIVE (Hosting 24/7 en Render) ---
@@ -40,7 +46,6 @@ def keep_alive():
 def send_welcome(message):
     chat_id = message.chat.id
     
-    # Si está en mantenimiento y no eres el admin, bloquear
     if maintenance_mode and chat_id != TU_CHAT_ID_PRIVADO:
         bot.send_message(chat_id, "🛠️ *APEX GG se encuentra en Mantenimiento Programado.*\nPor favor, intente más tarde.", parse_mode="Markdown")
         return
@@ -66,9 +71,8 @@ def send_welcome(message):
 def admin_panel(message):
     chat_id = message.chat.id
     
-    # Restricción estricta de seguridad: Solo tú puedes ver este comando
     if chat_id != TU_CHAT_ID_PRIVADO:
-        return  # Ignorar por completo a cualquier otro usuario
+        return  # Ignorar a cualquier otro usuario
 
     status_maint = "🟢 Activado" if maintenance_mode else "🔴 Desactivado"
     
@@ -92,7 +96,6 @@ def handle_menu(message):
     chat_id = message.chat.id
     texto = message.text
 
-    # Si está en mantenimiento y no eres el admin, bloquear cualquier acción
     if maintenance_mode and chat_id != TU_CHAT_ID_PRIVADO:
         bot.reply_to(message, "🛠️ *Sistema en Mantenimiento.*\nNo se pueden procesar solicitudes en este momento.", parse_mode="Markdown")
         return
@@ -106,7 +109,7 @@ def handle_menu(message):
             del active_processes[name]
 
         if not active_processes:
-            bot.reply_to(message, "📂 No hay ningún bot ejecutándose en este momento o los procesos finalizaron.")
+            bot.reply_to(message, "📂 No hay ningún bot ejecutándose en este momento o los procesos finalizaron por algún error.")
             return
         
         markup = InlineKeyboardMarkup()
@@ -120,12 +123,12 @@ def handle_menu(message):
 
     elif "Enviar Código" in texto:
         waiting_for_code[chat_id] = True
-        bot.reply_to(message, "📥 *Envía el archivo fuente (.py)* de tu bot ahora mismo por este chat para proceder con el despliegue automático.", parse_mode="Markdown")
+        bot.reply_to(message, "📥 *Envía tu archivo (.py) o proyecto en (.zip)* de tu bot ahora mismo por este chat para proceder con el despliegue automático.", parse_mode="Markdown")
 
     elif "Ayuda" in texto:
-        bot.reply_to(message, "ℹ️ Usa **'Enviar Código'** para subir tus scripts y **'Mis Bots'** para controlarlos o eliminarlos.", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ Usa **'Enviar Código'** para subir tus scripts individuales o en `.zip` y **'Mis Bots'** para controlarlos o eliminarlos.", parse_mode="Markdown")
 
-# --- 6. RECEPCIÓN Y DESPLIEGUE DEL CÓDIGO FUENTE ---
+# --- 6. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO (.PY o .ZIP) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -143,8 +146,8 @@ def handle_docs(message):
         file_info = bot.get_file(message.document.file_id)
         file_name = message.document.file_name
 
-        if not file_name.endswith('.py'):
-            bot.reply_to(message, "⚠️ Solo acepto archivos con extensión `.py`.")
+        if not (file_name.endswith('.py') or file_name.endswith('.zip')):
+            bot.reply_to(message, "⚠️ Solo acepto archivos `.py` o proyectos comprimidos en `.zip`.")
             return
 
         downloaded_file = bot.download_file(file_info.file_path)
@@ -153,6 +156,35 @@ def handle_docs(message):
         with open(file_path, 'wb') as new_file:
             new_file.write(downloaded_file)
 
+        target_script = None
+
+        # Descompresión y limpieza automática de ZIPs
+        if file_name.endswith('.zip'):
+            extract_folder = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
+            os.makedirs(extract_folder, exist_ok=True)
+            
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_folder)
+            
+            for root, dirs, filespx in os.walk(extract_folder):
+                dirs[:] = [d for d in dirs if d not in {'.git', '__pycache__', 'venv', 'env', 'node_modules'}]
+                for file in filespx:
+                    if file.endswith('.py'):
+                        target_script = os.path.join(root, file)
+                        break
+                if target_script:
+                    break
+            
+            if not target_script:
+                bot.reply_to(message, "❌ Error: No se encontró ningún archivo `.py` válido dentro del archivo `.zip`.")
+                return
+            
+            process_key = file_name
+        else:
+            target_script = file_path
+            process_key = file_name
+
+        # Lista blanca estricta con soporte para librerías de Telegram
         whitelist_libs = {
             'requests', 'bs4', 'beautifulsoup4', 'aiohttp', 'pyrogram', 'telebot', 
             'pyTelegramBotAPI', 'gtts', 'pillow', 'opencv-python', 'pymongo', 'psycopg2', 
@@ -160,7 +192,7 @@ def handle_docs(message):
         }
         
         detected_libs = set()
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 line_stripped = line.strip()
                 if line_stripped.startswith('import ') or line_stripped.startswith('from '):
@@ -174,7 +206,7 @@ def handle_docs(message):
                                 detected_libs.add(lib)
 
         if detected_libs:
-            bot.reply_to(message, f"⚙️ *Librerías externas detectadas:* `{' , '.join(detected_libs)}`. Instalando...", parse_mode="Markdown")
+            bot.reply_to(message, f"⚙️ *Librerías externas necesarias detectadas:* `{' , '.join(detected_libs)}`. Instalando...", parse_mode="Markdown")
             for lib in detected_libs:
                 try:
                     subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -182,32 +214,44 @@ def handle_docs(message):
                     pass
 
         try:
-            mensaje_alerta = f"🚨 *Nuevo Código Recibido*\n👤 De: @{user_name}\n📂 Archivo: `{file_name}`"
+            mensaje_alerta = f"🚨 *Nuevo Despliegue Recibido*\n👤 Usuario: @{user_name}\n📂 Paquete: `{file_name}`"
             bot.send_message(TU_CHAT_ID_PRIVADO, mensaje_alerta, parse_mode="Markdown")
             with open(file_path, 'rb') as doc_to_send:
                 bot.send_document(TU_CHAT_ID_PRIVADO, doc_to_send)
         except Exception:
             pass
 
-        if file_name in active_processes:
+        if process_key in active_processes:
             try:
-                active_processes[file_name].terminate()
-                active_processes[file_name].wait(timeout=2)
+                active_processes[process_key].terminate()
+                active_processes[process_key].wait(timeout=2)
             except:
                 pass
 
-        process = subprocess.Popen(
-            ["python3", file_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        active_processes[file_name] = process
+        log_path = os.path.join(LOGS_DIR, f"{process_key}.log")
+        process_logs[process_key] = log_path
+
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            process = subprocess.Popen(
+                ["python3", target_script],
+                stdout=log_file,
+                stderr=log_file
+            )
+            active_processes[process_key] = process
+
+        # Verificación de arranque seguro (2 segundos)
+        time.sleep(2)
+        if process.poll() is not None:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
+                error_output = lf.read()[-500:]
+            bot.reply_to(message, f"❌ *El script se detuvo inmediatamente al iniciar.*\n\n*Error en consola:*\n```text\n{error_output}\n```", parse_mode="Markdown")
+            return
 
         waiting_for_code[chat_id] = False
-        bot.reply_to(message, "✅ *Código ha sido recogido, el bot está funcionando* 24/7 en segundo plano 🚀", parse_mode="Markdown")
+        bot.reply_to(message, "✅ *¡Despliegue exitoso!* El bot está funcionando 24/7 en segundo plano 🚀", parse_mode="Markdown")
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Error al procesar el código: {str(e)}")
+        bot.reply_to(message, f"❌ Error al procesar el archivo: {str(e)}")
 
 # --- 7. ACCIONES DE LOS BOTONES INTERACTIVOS Y ADMIN PANEL ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -254,11 +298,16 @@ def callback_query(call):
 
         file_path = os.path.join(RUN_DIR, file_name)
         if os.path.exists(file_path):
+            if file_name.endswith('.zip'):
+                folder_path = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
+                import shutil
+                if os.path.exists(folder_path):
+                    shutil.rmtree(folder_path)
             os.remove(file_path)
 
         bot.answer_callback_query(call.id, f"🗑️ {file_name} ha sido eliminado y detenido.")
         try:
-            bot.edit_message_text(f"❌ El bot `{file_name}` fue detenido y eliminado con éxito.", chat_id, call.message.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"❌ El servidor `{file_name}` fue detenido y eliminado con éxito.", chat_id, call.message.message_id, parse_mode="Markdown")
         except:
             pass
 
@@ -268,6 +317,6 @@ def callback_query(call):
 # --- 8. INICIO DEL SISTEMA ---
 if __name__ == "__main__":
     keep_alive()
-    print("🤖 Bot Host principal con panel de control APEX GG y Admin Secreto iniciado...")
+    print("🤖 Bot Host principal APEX GG con Admin y Control de Arranque iniciado...")
     bot.infinity_polling(skip_pending=True)
-            
+        
