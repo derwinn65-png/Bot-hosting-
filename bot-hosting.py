@@ -101,14 +101,12 @@ def handle_menu(message):
         return
 
     if "Mis Bots" in texto:
-        # Mostramos tanto los que están corriendo como los que se detuvieron recientemente para poder ver sus logs
         if not active_processes and not process_logs:
             bot.reply_to(message, "📂 No hay ningún bot registrado en el sistema todavía.")
             return
         
         markup = InlineKeyboardMarkup()
         for name in list(active_processes.keys()) + list(process_logs.keys()):
-            # Evitar duplicados
             if name not in process_logs and name not in active_processes:
                 continue
                 
@@ -186,10 +184,12 @@ def handle_docs(message):
             target_script = file_path
             process_key = file_name
 
-        whitelist_libs = {
-            'requests', 'bs4', 'beautifulsoup4', 'aiohttp', 'pyrogram', 'telebot', 
-            'pyTelegramBotAPI', 'gtts', 'pillow', 'opencv-python', 'pymongo', 'psycopg2', 
-            'redis', 'feedparser', 'yt-dlp', 'colorama', 'cryptography', 'telegram', 'python-telegram-bot'
+        # Módulos internos nativos de Python que no deben instalarse con pip
+        stdlib_modules = {
+            'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
+            'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
+            'pathlib', 'sqlite3', 'hashlib', 'base64', 'urllib', 'http', 'socket', 'asyncio',
+            'logging', 'traceback', 'zipfile', 'tarfile', 'io', 'csv', 'xml', 'html'
         }
         
         detected_libs = set()
@@ -200,14 +200,20 @@ def handle_docs(message):
                     parts = line_stripped.replace('from ', '').replace('import ', '').split()
                     if parts:
                         lib = parts[0].split('.')[0]
-                        if lib in whitelist_libs:
+                        # Si no es un módulo interno de Python, lo agregamos para instalarlo
+                        if lib and lib not in stdlib_modules:
+                            # Mapeos especiales de nombres de librerías comunes
                             if lib == 'telegram':
                                 detected_libs.add('python-telegram-bot')
+                            elif lib == 'bs4':
+                                detected_libs.add('beautifulsoup4')
+                            elif lib == 'cv2':
+                                detected_libs.add('opencv-python')
                             else:
                                 detected_libs.add(lib)
 
         if detected_libs:
-            bot.reply_to(message, f"⚙️ *Librerías detectadas:* `{' , '.join(detected_libs)}`. Instalando...", parse_mode="Markdown")
+            bot.reply_to(message, f"⚙️ *Instalando dependencias necesarias:* `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
             for lib in detected_libs:
                 try:
                     subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -333,4 +339,4 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 APEX GG Cloud Hosting Daemon initialized successfully...")
     bot.infinity_polling(skip_pending=True)
-    
+            
