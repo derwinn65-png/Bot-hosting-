@@ -454,4 +454,72 @@ def callback_query(call):
         target_id = int(data.replace("unban_", ""))
         if target_id in banned_users:
             banned_users.remove(target_id)
-        bot.answer_callback_query(call.id, f"Usuario {target_id} desbaneado.", sh
+        bot.answer_callback_query(call.id, f"Usuario {target_id} desbaneado.", show_alert=True)
+            return
+        maintenance_mode = not maintenance_mode
+        status_text = "activado 🟢" if maintenance_mode else "desactivado 🔴"
+        bot.answer_callback_query(call.id, f"Modo mantenimiento {status_text}")
+        
+        status_maint = "🟢 Activado" if maintenance_mode else "🔴 Desactivado"
+        markup = InlineKeyboardMarkup(row_width=1)
+        btn_toggle = InlineKeyboardButton(f"🛠️ Modo Mantenimiento ({status_maint})", callback_data="toggle_maintenance")
+        btn_users = InlineKeyboardButton("👥 Ver Usuarios y Estadísticas", callback_data="admin_users")
+        btn_ban = InlineKeyboardButton("🚫 Gestionar Baneos", callback_data="admin_ban_menu")
+        markup.add(btn_toggle, btn_users, btn_ban)
+        try:
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
+        except:
+            pass
+
+    elif data.startswith("console_"):
+        file_name = data.replace("console_", "")
+        log_path = process_logs.get(file_name)
+        log_content = "No logs available."
+        if log_path and os.path.exists(log_path):
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
+                lines = lf.readlines()
+                log_content = "".join(lines[-20:]) if lines else "Log file is empty."
+        
+        bot.send_message(chat_id, f"📊 *Consola para `{file_name}`:*\n```text\n{log_content}\n```", parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("delete_"):
+        file_name = data.replace("delete_", "")
+        if file_name in active_processes:
+            try:
+                active_processes[file_name].terminate()
+            except:
+                pass
+            del active_processes[file_name]
+
+        if file_name in process_logs:
+            del process_logs[file_name]
+
+        file_path = os.path.join(RUN_DIR, file_name)
+        if os.path.exists(file_path):
+            if file_name.endswith('.zip'):
+                folder_path = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
+                import shutil
+                if os.path.exists(folder_path):
+                    shutil.rmtree(folder_path)
+            os.remove(file_path)
+
+        bot.answer_callback_query(call.id, f"🗑️ {file_name} eliminado.")
+        try:
+            bot.edit_message_text(f"❌ El bot `{file_name}` fue eliminado.", chat_id, call.message.message_id, parse_mode="Markdown")
+        except:
+            pass
+
+    elif data.startswith("ignore_"):
+        bot.answer_callback_query(call.id, "Bot status active.")
+
+# --- 9. ARRANQUE PRINCIPAL ---
+if __name__ == "__main__":
+    print("🤖 Iniciando APEX GG Cloud Hosting...")
+    
+    t_bot = threading.Thread(target=run_telegram_bot)
+    t_bot.daemon = True
+    t_bot.start()
+
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port, use_reloader=False)
