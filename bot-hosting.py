@@ -331,10 +331,11 @@ def handle_docs(message):
             target_script = file_path
             process_key = file_name
 
+        # Añadido 'telegram' y 'python-telegram-bot' a la lista blanca para que se instalen automáticamente
         whitelist_libs = {
             'requests', 'bs4', 'beautifulsoup4', 'aiohttp', 'pyrogram', 'telebot', 
             'pyTelegramBotAPI', 'gtts', 'pillow', 'opencv-python', 'pymongo', 'psycopg2', 
-            'redis', 'feedparser', 'yt-dlp', 'colorama', 'cryptography'
+            'redis', 'feedparser', 'yt-dlp', 'colorama', 'cryptography', 'telegram', 'python-telegram-bot'
         }
         
         detected_libs = set()
@@ -346,7 +347,11 @@ def handle_docs(message):
                     if parts:
                         lib = parts[0].split('.')[0]
                         if lib in whitelist_libs:
-                            detected_libs.add(lib)
+                            # Mapeo especial por si usa 'telegram' para instalar la librería de python-telegram-bot
+                            if lib == 'telegram':
+                                detected_libs.add('python-telegram-bot')
+                            else:
+                                detected_libs.add(lib)
 
         if detected_libs:
             bot.reply_to(message, f"{get_text(chat_id, 'libs_detected')} `{' , '.join(detected_libs)}`. {get_text(chat_id, 'installing')}", parse_mode="Markdown")
@@ -381,7 +386,6 @@ def handle_docs(message):
             )
             active_processes[process_key] = process
 
-        # Verificación de arranque para reportar errores inmediatos
         time.sleep(2)
         if process.poll() is not None:
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
@@ -400,4 +404,4 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 APEX GG Cloud Hosting Daemon initialized successfully...")
     bot.infinity_polling(skip_pending=True)
-            
+    
