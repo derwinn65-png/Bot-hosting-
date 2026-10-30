@@ -82,7 +82,7 @@ def get_text(chat_id, key):
     lang = user_language.get(chat_id, 'es')
     return TEXTS[lang].get(key, TEXTS['es'][key])
 
-# --- 3. CONFIGURACIÓN WEB FLASK (Obligatoria para Render) ---
+# --- 3. CONFIGURACIÓN WEB FLASK ---
 app = Flask('')
 
 @app.route('/')
@@ -90,7 +90,6 @@ def home():
     return "🤖 APEX GG - Cloud Hosting Panel 24/7 is active and fully operational."
 
 def run_telegram_bot():
-    """Ejecuta el bot de Telegram en segundo plano para no bloquear el puerto web"""
     print("🤖 Iniciando polling de Telegram en hilo secundario...")
     while True:
         try:
@@ -99,7 +98,7 @@ def run_telegram_bot():
             print(f"⚠️ Error en polling de Telegram: {e}")
             time.sleep(3)
 
-# --- 4. PANEL PRINCIPAL CON CONTROL DE ACCESO (/start) ---
+# --- 4. PANEL PRINCIPAL (/start) ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_id = message.chat.id
@@ -455,7 +454,13 @@ def callback_query(call):
         if target_id in banned_users:
             banned_users.remove(target_id)
         bot.answer_callback_query(call.id, f"Usuario {target_id} desbaneado.", show_alert=True)
+        bot.send_message(target_id, "✅ Tu baneo ha sido retirado. Envía `/start`.")
+
+    elif data == "toggle_maintenance":
+        if chat_id != TU_CHAT_ID_PRIVADO:
+            bot.answer_callback_query(call.id, "Acceso denegado.", show_alert=True)
             return
+        global maintenance_mode
         maintenance_mode = not maintenance_mode
         status_text = "activado 🟢" if maintenance_mode else "desactivado 🔴"
         bot.answer_callback_query(call.id, f"Modo mantenimiento {status_text}")
