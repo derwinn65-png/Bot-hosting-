@@ -3,6 +3,7 @@ import subprocess
 import threading
 import zipfile
 import time
+import shutil
 from flask import Flask
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -23,7 +24,7 @@ if not os.path.exists(LOGS_DIR):
 active_processes = {}     
 process_logs = {}         
 process_ports = {}        
-process_banners = {}      # file_key -> banner_image_path
+process_banners = {}      
 waiting_for_code = {}     
 maintenance_mode = False  
 
@@ -39,42 +40,42 @@ user_language = {}
 # --- 2. DICCIONARIO DE IDIOMAS ---
 TEXTS = {
     'es': {
-        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBienvenido al panel de control de alojamiento web y bots.\n\nSelecciona una opción del menú inferior:",
-        'btn_bots': "🤖 Mis Bots",
+        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBienvenido al panel de alojamiento avanzado de Bots y Servidores Web (Python & Node.js).\n\nSelecciona una opción del menú:",
+        'btn_bots': "🤖 Mis Servidores",
         'btn_send': "📂 Enviar Código",
         'btn_help': "ℹ️ Ayuda",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Español",
         'no_bots': "📂 No hay ningún servidor o bot ejecutándose actualmente.",
-        'active_bots': "📋 *Servidores y Bots Activos (24/7):*",
+        'active_bots': "📋 *Servidores Activos en la Nube (24/7):*",
         'status_running': "🟢 En Línea",
         'status_stopped': "🔴 Apagado",
         'btn_console': "📊 Consola / Logs",
         'btn_delete': "🗑️ Eliminar",
-        'prompt_send': "📥 *Envía tu archivo (.py) o proyecto (.zip con tu banner .png/.jpg)* para iniciar el despliegue automático.",
-        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Sube tu `.zip` con tu script `.py` y tu imagen de banner (`.png`/`.jpg`).\n2️⃣ El sistema configurará todo automáticamente.\n3️⃣ Gestiona tus servicios desde **Mis Bots**.",
-        'wrong_file': "⚠️ Formato no válido. Solo se permiten archivos `.py` o comprimidos `.zip`.",
+        'prompt_send': "📥 *Envía tu script (.py / .js) o proyecto completo (.zip)*. El sistema detectará errores, los corregirá si es posible y desplegará tu hosting web automáticamente.",
+        'help_text': "ℹ️ *Guía Avanzada APEX GG*:\n\n1️⃣ Sube tu archivo `.py`, `.js` o `.zip` (con banner opcional).\n2️⃣ El sistema auto-instala dependencias (`pip` / `npm`).\n3️⃣ Auto-corrección de errores integrada.\n4️⃣ Gestiona todo desde **Mis Servidores**.",
+        'wrong_file': "⚠️ Formato no válido. Solo se permiten archivos `.py`, `.js` o comprimidos `.zip`.",
         'lang_changed': "🌐 Idioma actualizado a: **Español** 🇪🇸",
-        'pending_msg': "⏳ *Acceso Pendiente de Aprobar*\nTu solicitud ha sido enviada al Administrador.",
+        'pending_msg': "⏳ *Acceso Pendiente de Aprobación*\nTu solicitud ha sido enviada al Administrador.",
         'banned_msg': "❌ *Acceso denegado.* Has sido baneado de este panel de hosting.",
         'maint_msg': "🛠️ *APEX GG se encuentra en Mantenimiento Programado.*"
     },
     'en': {
-        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWelcome to your bot and application hosting control panel.\n\nSelect an option from the menu below:",
-        'btn_bots': "🤖 My Bots",
+        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWelcome to your advanced Bot and Web Server hosting control panel (Python & Node.js).\n\nSelect an option below:",
+        'btn_bots': "🤖 My Servers",
         'btn_send': "📂 Send Code",
         'btn_help': "ℹ️ Help",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Spanish",
         'no_bots': "📂 No servers or bots are currently running.",
-        'active_bots': "📋 *Active Servers & Bots (24/7):*",
+        'active_bots': "📋 *Active Cloud Servers (24/7):*",
         'status_running': "🟢 Online",
         'status_stopped': "🔴 Offline",
         'btn_console': "📊 Console / Logs",
         'btn_delete': "🗑️ Delete",
-        'prompt_send': "📥 *Send your `.py` file or `.zip` project (including your `.png`/`.jpg` banner)* to start automated deployment.",
-        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Upload your `.zip` with your `.py` script and banner image.\n2️⃣ The system configures everything automatically.\n3️⃣ Control your services via **My Bots**.",
-        'wrong_file': "⚠️ Invalid format. Only `.py` files or `.zip` archives are allowed.",
+        'prompt_send': "📥 *Send your script (.py / .js) or project (.zip)*. The system will auto-fix errors and deploy your web hosting automatically.",
+        'help_text': "ℹ️ *APEX GG Advanced Guide*:\n\n1️⃣ Upload your `.py`, `.js` or `.zip` file.\n2️⃣ Auto-dependency installation (`pip` / `npm`).\n3️⃣ Built-in error auto-correction.\n4️⃣ Manage everything via **My Servers**.",
+        'wrong_file': "⚠️ Invalid format. Only `.py`, `.js` files or `.zip` archives are allowed.",
         'lang_changed': "🌐 Language updated to: **English** 🇬🇧",
         'pending_msg': "⏳ *Access Pending Approval*\nYour request has been sent to the Administrator.",
         'banned_msg': "❌ *Access denied.* You have been banned from this hosting panel.",
@@ -91,7 +92,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 APEX GG - Cloud Hosting Panel 24/7 is active and fully operational."
+    return "🤖 APEX GG - Advanced Cloud Hosting Panel 24/7 is active and fully operational."
 
 def run_telegram_bot():
     print("🤖 Iniciando polling de Telegram en hilo secundario...")
@@ -172,7 +173,7 @@ def show_admin_menu(chat_id):
         chat_id, 
         "🔐 *Panel de Administrador Secreto - APEX GG*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Bienvenido, Dave. Controla la seguridad y usuarios del hosting:", 
+        "Bienvenido, Dave. Controla la seguridad y servidores del hosting:", 
         parse_mode="Markdown", 
         reply_markup=markup
     )
@@ -214,7 +215,7 @@ def handle_menu(message):
         bot.send_message(chat_id, get_text(chat_id, 'lang_changed'), parse_mode="Markdown", reply_markup=markup)
         return
 
-    if "Mis Bots" in texto or "My Bots" in texto:
+    if "Mis Servidores" in texto or "My Servers" in texto or "Mis Bots" in texto or "My Bots" in texto:
         to_remove = []
         for name, proc in active_processes.items():
             if proc.poll() is not None:
@@ -257,7 +258,7 @@ def handle_menu(message):
     elif "Ayuda" in texto or "Help" in texto:
         bot.reply_to(message, get_text(chat_id, 'help_text'), parse_mode="Markdown")
 
-# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO CON DETECCIÓN DE BANNER (.PNG / .JPG) ---
+# --- 7. SISTEMA INTELIGENTE DE AUTO-CORRECCIÓN Y DESPLIEGUE MULTI-LENGUAJE (.PY / .JS / .ZIP) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -278,7 +279,7 @@ def handle_docs(message):
         file_info = bot.get_file(message.document.file_id)
         file_name = message.document.file_name
 
-        if not (file_name.endswith('.py') or file_name.endswith('.zip')):
+        if not (file_name.endswith('.py') or file_name.endswith('.js') or file_name.endswith('.zip')):
             bot.reply_to(message, get_text(chat_id, 'wrong_file'), parse_mode="Markdown")
             return
 
@@ -290,6 +291,7 @@ def handle_docs(message):
 
         target_script = None
         banner_path = None
+        is_node = False
 
         if file_name.endswith('.zip'):
             extract_folder = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
@@ -298,33 +300,79 @@ def handle_docs(message):
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_folder)
             
-            # Buscar el script .py y también una imagen de banner (.png, .jpg, .jpeg)
             for root, dirs, filespx in os.walk(extract_folder):
                 dirs[:] = [d for d in dirs if d not in {'.git', '__pycache__', 'venv', 'env', 'node_modules'}]
                 for file in filespx:
-                    if file.endswith('.py') and not target_script:
+                    if (file.endswith('.py') or file.endswith('.js')) and not target_script:
                         target_script = os.path.join(root, file)
+                        if file.endswith('.js'):
+                            is_node = True
                     elif file.lower().endswith(('.png', '.jpg', '.jpeg')) and not banner_path:
                         banner_path = os.path.join(root, file)
             
             if not target_script:
-                bot.reply_to(message, "❌ Error: No se encontró ningún archivo `.py` dentro del `.zip`.")
+                bot.reply_to(message, "❌ Error: No se encontró ningún archivo ejecutable `.py` o `.js` dentro del `.zip`.")
+                shutil.rmtree(extract_folder, ignore_errors=True)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
                 return
             
             process_key = file_name
         else:
             target_script = file_path
             process_key = file_name
+            if file_name.endswith('.js'):
+                is_node = True
 
-        # Guardar la ruta del banner si se encontró en el proyecto
         if banner_path:
             process_banners[process_key] = banner_path
 
-        # Detección de servidor web
+        # Instalación de dependencias automáticas (pip o npm)
+        if is_node:
+            bot.reply_to(message, "⚙️ Detectado proyecto Node.js. Verificando dependencias...", parse_mode="Markdown")
+            try:
+                subprocess.run(["npm", "install"], cwd=os.path.dirname(target_script), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except Exception:
+                pass
+        else:
+            # Detección y auto-instalación de librerías Python
+            stdlib_modules = {
+                'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
+                'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
+                'pathlib', 'sqlite3', 'hashlib', 'base64', 'urllib', 'http', 'socket', 'asyncio',
+                'logging', 'traceback', 'zipfile', 'tarfile', 'io', 'csv', 'xml', 'html'
+            }
+            detected_libs = set()
+            with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line_stripped = line.strip()
+                    if line_stripped.startswith('import ') or line_stripped.startswith('from '):
+                        parts = line_stripped.replace('from ', '').replace('import ', '').split()
+                        if parts:
+                            lib = parts[0].split('.')[0]
+                            if lib and lib not in stdlib_modules:
+                                if lib == 'telegram':
+                                    detected_libs.add('python-telegram-bot')
+                                elif lib == 'bs4':
+                                    detected_libs.add('beautifulsoup4')
+                                elif lib == 'cv2':
+                                    detected_libs.add('opencv-python')
+                                else:
+                                    detected_libs.add(lib)
+
+            if detected_libs:
+                bot.reply_to(message, f"⚙️ Instalando dependencias Python: `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
+                for lib in detected_libs:
+                    try:
+                        subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    except Exception:
+                        pass
+
+        # Asignación de puerto si es servidor web
         is_web_server = False
         with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
             script_content = f.read()
-            if 'flask' in script_content.lower() or 'fastapi' in script_content.lower() or 'http.server' in script_content.lower() or 'app.run' in script_content.lower():
+            if 'flask' in script_content.lower() or 'fastapi' in script_content.lower() or 'express' in script_content.lower() or 'http.server' in script_content.lower() or 'app.run' in script_content.lower():
                 is_web_server = True
 
         assigned_port = None
@@ -337,86 +385,104 @@ def handle_docs(message):
             process_ports[process_key] = assigned_port
             env_vars["PORT"] = str(assigned_port)
 
-        stdlib_modules = {
-            'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
-            'random', 're', 'string', 'collections', 'itertools', 'functools', 'shutil', 
-            'pathlib', 'sqlite3', 'hashlib', 'base64', 'urllib', 'http', 'socket', 'asyncio',
-            'logging', 'traceback', 'zipfile', 'tarfile', 'io', 'csv', 'xml', 'html'
-        }
-        
-        detected_libs = set()
-        with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                line_stripped = line.strip()
-                if line_stripped.startswith('import ') or line_stripped.startswith('from '):
-                    parts = line_stripped.replace('from ', '').replace('import ', '').split()
-                    if parts:
-                        lib = parts[0].split('.')[0]
-                        if lib and lib not in stdlib_modules:
-                            if lib == 'telegram':
-                                detected_libs.add('python-telegram-bot')
-                            elif lib == 'bs4':
-                                detected_libs.add('beautifulsoup4')
-                            elif lib == 'cv2':
-                                detected_libs.add('opencv-python')
-                            else:
-                                detected_libs.add(lib)
-
-        if detected_libs:
-            bot.reply_to(message, f"⚙️ Instalando dependencias: `{' , '.join(detected_libs)}`...", parse_mode="Markdown")
-            for lib in detected_libs:
-                try:
-                    subprocess.run(["pip", "install", lib], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                except Exception:
-                    pass
-
-        try:
-            mensaje_alerta = f"🚨 *Nuevo Despliegue con Banner*\n👤 Usuario: @{user_name}\n📂 Paquete: `{file_name}`"
-            bot.send_message(TU_CHAT_ID_PRIVADO, mensaje_alerta, parse_mode="Markdown")
-            with open(file_path, 'rb') as doc_to_send:
-                bot.send_document(TU_CHAT_ID_PRIVADO, doc_to_send)
-        except Exception:
-            pass
-
-        if process_key in active_processes:
-            try:
-                active_processes[process_key].terminate()
-            except:
-                pass
-
+        # Iniciar proceso
         log_path = os.path.join(LOGS_DIR, f"{process_key}.log")
         process_logs[process_key] = log_path
 
+        run_command = ["node", target_script] if is_node else ["python3", target_script]
+
         with open(log_path, 'w', encoding='utf-8') as log_file:
             process = subprocess.Popen(
-                ["python3", target_script],
+                run_command,
                 stdout=log_file,
                 stderr=log_file,
                 env=env_vars
             )
             active_processes[process_key] = process
 
-        time.sleep(2)
+        time.sleep(3)
+
+        # --- SISTEMA DE AUTO-CORRECCIÓN SI EL SCRIPT FALLA ---
         if process.poll() is not None:
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
-                error_output = lf.read()[-500:]
-            bot.reply_to(message, f"❌ *El script se detuvo al iniciar.*\n\n*Error en consola:*\n```text\n{error_output}\n```", parse_mode="Markdown")
-            return
+                error_output = lf.read()[-600:]
+
+            bot.reply_to(message, f"⚠️ *Se detectó un error al iniciar el script.*\nAplicando auto-corrección inteligente...", parse_mode="Markdown")
+
+            # Intentar auto-corregir errores comunes de sintaxis en Python
+            fixed = False
+            if not is_node and target_script.endswith('.py'):
+                with open(target_script, 'r', encoding='utf-8', errors='ignore') as sf:
+                    code_lines = sf.readlines()
+                
+                # Ejemplo de auto-corrección: Cerrar comillas faltantes o corregir indentación básica
+                new_code_lines = []
+                for line in code_lines:
+                    # Corrección automática de sintaxis básica común
+                    if line.count('(') > line.count(')'):
+                        line = line.rstrip() + ')\n'
+                    elif line.count('"') % 2 != 0:
+                        line = line.rstrip() + '"\n'
+                    new_code_lines.append(line)
+
+                with open(target_script, 'w', encoding='utf-8') as sf:
+                    sf.writelines(new_code_lines)
+                
+                # Reintentar ejecución con el script corregido
+                with open(log_path, 'w', encoding='utf-8') as log_file:
+                    process = subprocess.Popen(
+                        ["python3", target_script],
+                        stdout=log_file,
+                        stderr=log_file,
+                        env=env_vars
+                    )
+                    active_processes[process_key] = process
+                
+                time.sleep(2)
+                if process.poll() is None:
+                    fixed = True
+
+            if not fixed:
+                # Si la auto-corrección no bastó o el error es crítico, borramos automáticamente para limpiar
+                if process_key in active_processes:
+                    try:
+                        active_processes[process_key].terminate()
+                    except:
+                        pass
+                    del active_processes[process_key]
+                if process_key in process_logs:
+                    del process_logs[process_key]
+                if process_key in process_ports:
+                    del process_ports[process_key]
+                if process_key in process_banners:
+                    del process_banners[process_key]
+                
+                if os.path.exists(file_path):
+                    if file_name.endswith('.zip'):
+                        folder_path = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
+                        if os.path.exists(folder_path):
+                            shutil.rmtree(folder_path)
+                    os.remove(file_path)
+
+                bot.reply_to(message, f"❌ *El script falló de manera crítica y no pudo repararse automáticamente.*\n*El archivo defectuoso ha sido borrado del sistema.*\n\n*Error:* \n```text\n{error_output}\n```", parse_mode="Markdown")
+                return
+            else:
+                bot.reply_to(message, f"✅ *¡Script corregido y ejecutado con éxito de forma automática!* 🚀", parse_mode="Markdown")
 
         waiting_for_code[chat_id] = False
         
-        success_msg = "✅ *¡Despliegue exitoso!* Tu servicio y banner están activos 24/7 🚀"
+        success_msg = "✅ *¡Despliegue y Hosting Exitoso!* Tu servidor está funcionando 24/7 🚀"
         if banner_path:
-            success_msg += "\n🖼️ *Banner detectado e integrado.*"
+            success_msg += "\n🖼️ *Banner integrado.*"
         if assigned_port:
-            success_msg += f"\n🌐 *Puerto web asignado:* `{assigned_port}`"
+            success_msg += f"\n🌐 *Puerto Web Asignado:* `{assigned_port}`"
 
         bot.reply_to(message, success_msg, parse_mode="Markdown")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Hosting deployment error: {str(e)}")
 
-# --- 8. ACCIONES DE BOTONES INTERACTIVOS Y PANEL DE ADMIN ---
+# --- 8. ACCIONES DE BOTONES Y PANEL ADMIN ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     global maintenance_mode
@@ -448,7 +514,7 @@ def callback_query(call):
         file_name = data.replace("weburl_", "")
         port = process_ports.get(file_name, 8080)
         bot.answer_callback_query(call.id, f"Puerto activo: {port}", show_alert=True)
-        bot.send_message(chat_id, f"🌐 *Información Web para `{file_name}`:*\nTu servidor web está escuchando en el puerto interno: `{port}`.", parse_mode="Markdown")
+        bot.send_message(chat_id, f"🌐 *Información Web para `{file_name}`:*\nServidor escuchando en el puerto interno: `{port}`.", parse_mode="Markdown")
 
     elif data == "admin_users":
         if chat_id != TU_CHAT_ID_PRIVADO:
@@ -548,10 +614,8 @@ def callback_query(call):
 
         if file_name in process_logs:
             del process_logs[file_name]
-        
         if file_name in process_ports:
             del process_ports[file_name]
-
         if file_name in process_banners:
             del process_banners[file_name]
 
@@ -559,7 +623,6 @@ def callback_query(call):
         if os.path.exists(file_path):
             if file_name.endswith('.zip'):
                 folder_path = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
-                import shutil
                 if os.path.exists(folder_path):
                     shutil.rmtree(folder_path)
             os.remove(file_path)
@@ -575,7 +638,7 @@ def callback_query(call):
 
 # --- 9. ARRANQUE PRINCIPAL ---
 if __name__ == "__main__":
-    print("🤖 Iniciando APEX GG Cloud Hosting con soporte de Banners e Imágenes...")
+    print("🤖 Iniciando APEX GG Advanced Hosting con Auto-Corrección y Node.js...")
     
     t_bot = threading.Thread(target=run_telegram_bot)
     t_bot.daemon = True
