@@ -22,8 +22,12 @@ if not os.path.exists(LOGS_DIR):
 
 active_processes = {}     
 process_logs = {}         
+process_ports = {}        
+process_banners = {}      # file_key -> banner_image_path
 waiting_for_code = {}     
 maintenance_mode = False  
+
+BASE_USER_PORT = 9000
 
 # --- GESTIÓN DE ACCESO Y USUARIOS ---
 authorized_users = {TU_CHAT_ID_PRIVADO}
@@ -41,17 +45,17 @@ TEXTS = {
         'btn_help': "ℹ️ Ayuda",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Español",
-        'no_bots': "📂 No hay ningún bot ejecutándose actualmente.",
-        'active_bots': "📋 *Bots Activos (24/7):*",
+        'no_bots': "📂 No hay ningún servidor o bot ejecutándose actualmente.",
+        'active_bots': "📋 *Servidores y Bots Activos (24/7):*",
         'status_running': "🟢 En Línea",
         'status_stopped': "🔴 Apagado",
         'btn_console': "📊 Consola / Logs",
         'btn_delete': "🗑️ Eliminar",
-        'prompt_send': "📥 *Envía el archivo fuente (.py) o proyecto en (.zip)* de tu bot para iniciar el despliegue automático.",
-        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Pulsa **Enviar Código** para subir tu script.\n2️⃣ El sistema instalará las dependencias necesarias.\n3️⃣ Controla tus servicios desde **Mis Bots**.",
+        'prompt_send': "📥 *Envía tu archivo (.py) o proyecto (.zip con tu banner .png/.jpg)* para iniciar el despliegue automático.",
+        'help_text': "ℹ️ *Guía del Hosting APEX GG*:\n\n1️⃣ Sube tu `.zip` con tu script `.py` y tu imagen de banner (`.png`/`.jpg`).\n2️⃣ El sistema configurará todo automáticamente.\n3️⃣ Gestiona tus servicios desde **Mis Bots**.",
         'wrong_file': "⚠️ Formato no válido. Solo se permiten archivos `.py` o comprimidos `.zip`.",
         'lang_changed': "🌐 Idioma actualizado a: **Español** 🇪🇸",
-        'pending_msg': "⏳ *Acceso Pendiente de Aprobación*\nTu solicitud ha sido enviada al Administrador.",
+        'pending_msg': "⏳ *Acceso Pendiente de Aprobar*\nTu solicitud ha sido enviada al Administrador.",
         'banned_msg': "❌ *Acceso denegado.* Has sido baneado de este panel de hosting.",
         'maint_msg': "🛠️ *APEX GG se encuentra en Mantenimiento Programado.*"
     },
@@ -62,14 +66,14 @@ TEXTS = {
         'btn_help': "ℹ️ Help",
         'btn_admin': "🔐 Admin Panel",
         'btn_lang': "🌐 English / Spanish",
-        'no_bots': "📂 No bots are currently running.",
-        'active_bots': "📋 *Active Bots (24/7):*",
+        'no_bots': "📂 No servers or bots are currently running.",
+        'active_bots': "📋 *Active Servers & Bots (24/7):*",
         'status_running': "🟢 Online",
         'status_stopped': "🔴 Offline",
         'btn_console': "📊 Console / Logs",
         'btn_delete': "🗑️ Delete",
-        'prompt_send': "📥 *Send your bot source file (.py) or complete project (.zip)* to start automated cloud deployment.",
-        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Click **Send Code** to upload your script.\n2️⃣ The system will automatically install required dependencies.\n3️⃣ Control your services via **My Bots**.",
+        'prompt_send': "📥 *Send your `.py` file or `.zip` project (including your `.png`/`.jpg` banner)* to start automated deployment.",
+        'help_text': "ℹ️ *APEX GG Hosting Guide*:\n\n1️⃣ Upload your `.zip` with your `.py` script and banner image.\n2️⃣ The system configures everything automatically.\n3️⃣ Control your services via **My Bots**.",
         'wrong_file': "⚠️ Invalid format. Only `.py` files or `.zip` archives are allowed.",
         'lang_changed': "🌐 Language updated to: **English** 🇬🇧",
         'pending_msg': "⏳ *Access Pending Approval*\nYour request has been sent to the Administrator.",
@@ -217,6 +221,10 @@ def handle_menu(message):
                 to_remove.append(name)
         for name in to_remove:
             del active_processes[name]
+            if name in process_ports:
+                del process_ports[name]
+            if name in process_banners:
+                del process_banners[name]
 
         if not active_processes and not process_logs:
             bot.reply_to(message, get_text(chat_id, 'no_bots'))
@@ -230,6 +238,11 @@ def handle_menu(message):
             status = get_text(chat_id, 'status_running') if (proc and proc.poll() is None) else get_text(chat_id, 'status_stopped')
             
             markup.add(InlineKeyboardButton(f"{name} ({status})", callback_data=f"ignore_{name}"))
+            
+            if name in process_ports:
+                p_port = process_ports[name]
+                markup.add(InlineKeyboardButton(f"🌐 Ver Web (Puerto {p_port})", callback_data=f"weburl_{name}"))
+
             markup.add(
                 InlineKeyboardButton(get_text(chat_id, 'btn_console'), callback_data=f"console_{name}"),
                 InlineKeyboardButton(get_text(chat_id, 'btn_delete'), callback_data=f"delete_{name}")
@@ -244,7 +257,7 @@ def handle_menu(message):
     elif "Ayuda" in texto or "Help" in texto:
         bot.reply_to(message, get_text(chat_id, 'help_text'), parse_mode="Markdown")
 
-# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO (.PY o .ZIP) ---
+# --- 7. RECEPCIÓN Y DESPLIEGUE AUTOMÁTICO CON DETECCIÓN DE BANNER (.PNG / .JPG) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     chat_id = message.chat.id
@@ -276,6 +289,7 @@ def handle_docs(message):
             new_file.write(downloaded_file)
 
         target_script = None
+        banner_path = None
 
         if file_name.endswith('.zip'):
             extract_folder = os.path.join(RUN_DIR, file_name.replace('.zip', ''))
@@ -284,22 +298,44 @@ def handle_docs(message):
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_folder)
             
+            # Buscar el script .py y también una imagen de banner (.png, .jpg, .jpeg)
             for root, dirs, filespx in os.walk(extract_folder):
                 dirs[:] = [d for d in dirs if d not in {'.git', '__pycache__', 'venv', 'env', 'node_modules'}]
                 for file in filespx:
-                    if file.endswith('.py'):
+                    if file.endswith('.py') and not target_script:
                         target_script = os.path.join(root, file)
-                        break
-                if target_script:
-                    break
+                    elif file.lower().endswith(('.png', '.jpg', '.jpeg')) and not banner_path:
+                        banner_path = os.path.join(root, file)
             
             if not target_script:
-                bot.reply_to(message, "❌ Error: No .py script found inside zip archive.")
+                bot.reply_to(message, "❌ Error: No se encontró ningún archivo `.py` dentro del `.zip`.")
                 return
+            
             process_key = file_name
         else:
             target_script = file_path
             process_key = file_name
+
+        # Guardar la ruta del banner si se encontró en el proyecto
+        if banner_path:
+            process_banners[process_key] = banner_path
+
+        # Detección de servidor web
+        is_web_server = False
+        with open(target_script, 'r', encoding='utf-8', errors='ignore') as f:
+            script_content = f.read()
+            if 'flask' in script_content.lower() or 'fastapi' in script_content.lower() or 'http.server' in script_content.lower() or 'app.run' in script_content.lower():
+                is_web_server = True
+
+        assigned_port = None
+        env_vars = os.environ.copy()
+        if is_web_server:
+            existing_ports = list(process_ports.values())
+            assigned_port = BASE_USER_PORT
+            while assigned_port in existing_ports:
+                assigned_port += 1
+            process_ports[process_key] = assigned_port
+            env_vars["PORT"] = str(assigned_port)
 
         stdlib_modules = {
             'os', 'sys', 'subprocess', 'threading', 'time', 'datetime', 'json', 'math', 
@@ -335,7 +371,7 @@ def handle_docs(message):
                     pass
 
         try:
-            mensaje_alerta = f"🚨 *Nuevo Despliegue en Hosting*\n👤 Usuario: @{user_name}\n📂 Paquete: `{file_name}`"
+            mensaje_alerta = f"🚨 *Nuevo Despliegue con Banner*\n👤 Usuario: @{user_name}\n📂 Paquete: `{file_name}`"
             bot.send_message(TU_CHAT_ID_PRIVADO, mensaje_alerta, parse_mode="Markdown")
             with open(file_path, 'rb') as doc_to_send:
                 bot.send_document(TU_CHAT_ID_PRIVADO, doc_to_send)
@@ -355,7 +391,8 @@ def handle_docs(message):
             process = subprocess.Popen(
                 ["python3", target_script],
                 stdout=log_file,
-                stderr=log_file
+                stderr=log_file,
+                env=env_vars
             )
             active_processes[process_key] = process
 
@@ -367,7 +404,14 @@ def handle_docs(message):
             return
 
         waiting_for_code[chat_id] = False
-        bot.reply_to(message, "✅ *¡Despliegue exitoso!* El bot está funcionando 24/7 en segundo plano 🚀", parse_mode="Markdown")
+        
+        success_msg = "✅ *¡Despliegue exitoso!* Tu servicio y banner están activos 24/7 🚀"
+        if banner_path:
+            success_msg += "\n🖼️ *Banner detectado e integrado.*"
+        if assigned_port:
+            success_msg += f"\n🌐 *Puerto web asignado:* `{assigned_port}`"
+
+        bot.reply_to(message, success_msg, parse_mode="Markdown")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Hosting deployment error: {str(e)}")
@@ -399,6 +443,12 @@ def callback_query(call):
             bot.answer_callback_query(call.id, f"Usuario @{uname} rechazado.")
             bot.send_message(target_id, "❌ Tu solicitud de acceso fue rechazada.")
             bot.edit_message_text(f"❌ Solicitud de @{uname} (`{target_id}`) **Rechazada**.", chat_id, call.message.message_id, parse_mode="Markdown")
+
+    elif data.startswith("weburl_"):
+        file_name = data.replace("weburl_", "")
+        port = process_ports.get(file_name, 8080)
+        bot.answer_callback_query(call.id, f"Puerto activo: {port}", show_alert=True)
+        bot.send_message(chat_id, f"🌐 *Información Web para `{file_name}`:*\nTu servidor web está escuchando en el puerto interno: `{port}`.", parse_mode="Markdown")
 
     elif data == "admin_users":
         if chat_id != TU_CHAT_ID_PRIVADO:
@@ -498,6 +548,12 @@ def callback_query(call):
 
         if file_name in process_logs:
             del process_logs[file_name]
+        
+        if file_name in process_ports:
+            del process_ports[file_name]
+
+        if file_name in process_banners:
+            del process_banners[file_name]
 
         file_path = os.path.join(RUN_DIR, file_name)
         if os.path.exists(file_path):
@@ -510,16 +566,16 @@ def callback_query(call):
 
         bot.answer_callback_query(call.id, f"🗑️ {file_name} eliminado.")
         try:
-            bot.edit_message_text(f"❌ El bot `{file_name}` fue eliminado.", chat_id, call.message.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"❌ El servidor `{file_name}` fue eliminado.", chat_id, call.message.message_id, parse_mode="Markdown")
         except:
             pass
 
     elif data.startswith("ignore_"):
-        bot.answer_callback_query(call.id, "Bot status active.")
+        bot.answer_callback_query(call.id, "Server status active.")
 
 # --- 9. ARRANQUE PRINCIPAL ---
 if __name__ == "__main__":
-    print("🤖 Iniciando APEX GG Cloud Hosting...")
+    print("🤖 Iniciando APEX GG Cloud Hosting con soporte de Banners e Imágenes...")
     
     t_bot = threading.Thread(target=run_telegram_bot)
     t_bot.daemon = True
