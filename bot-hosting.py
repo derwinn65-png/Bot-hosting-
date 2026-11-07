@@ -8,7 +8,7 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- 1. CONFIGURACIÓN INICIAL ---
-TOKEN = "9103684662:AAE0GCB-uc6bB9dxDTDBT6duSAIa5UTfHIY"
+TOKEN = "9225089424:AAHegb2DAK6NIMwh9LRLqpCdtbxoiAPwOs0"
 TU_CHAT_ID_PRIVADO = 6507117935  # Tu ID numérico privado (Admin)
 
 bot = telebot.TeleBot(TOKEN)
