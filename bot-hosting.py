@@ -39,7 +39,7 @@ user_language = {}
 # --- 2. DICCIONARIO DE IDIOMAS ---
 TEXTS = {
     'es': {
-        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBienvenido al panel de control de alojamiento web y bots.\n\nSelecciona una opción del menú inferior:",
+        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBienvenido al bot de alojamiento de bots Soporte:@ANGELDEV67\n\nSelecciona una opción del menú inferior:",
         'btn_bots': "🤖 Mis Bots",
         'btn_send': "📂 Enviar Código",
         'btn_help': "ℹ️ Ayuda",
@@ -60,7 +60,7 @@ TEXTS = {
         'maint_msg': "🛠️ *APEX GG se encuentra en Mantenimiento Programado.*"
     },
     'en': {
-        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWelcome to your bot and application hosting control panel.\n\nSelect an option from the menu below:",
+        'welcome': "🤖 *APEX GG - Cloud Hosting Panel 24/7*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWelcome to the bot hosting support bot: @ANGELDEV67\n\nSelect an option from the menu below:",
         'btn_bots': "🤖 My Bots",
         'btn_send': "📂 Send Code",
         'btn_help': "ℹ️ Help",
